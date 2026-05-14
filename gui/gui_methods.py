@@ -2,7 +2,7 @@
 @author: TAbdelAlim
 """
 
-from tkinter.filedialog import askopenfilename, asksaveasfilename
+from tkinter.filedialog import askopenfilename, asksaveasfilename, askdirectory
 from menpo3d.vtkutils import VTKClosestPointLocator
 import pyacvd
 import pyvista as pv
@@ -546,6 +546,28 @@ class GuiMethods:
         except:
             pass
 
+    def save_raw_landmarks(self):
+        try:
+            if not (hasattr(self, 'landmarks') and
+                    len(self.landmarks[0]) == 3 and
+                    len(self.landmarks[1]) == 3 and
+                    len(self.landmarks[2]) == 3):
+                print('Save landmarks: all 3 landmarks must be picked first.')
+                return
+            data = {
+                "datetime": datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "mesh_filepath": str(self.file_path),
+                "nasion":       list(self.landmarks[0]),
+                "tragus_left":  list(self.landmarks[1]),
+                "tragus_right": list(self.landmarks[2]),
+            }
+            out = self.file_path.parent / (self.file_path.stem + '_landmarks_raw.json')
+            with open(out, 'w') as f:
+                json.dump(data, f, indent=4)
+            print(f'Raw landmarks saved: {out}')
+        except Exception as e:
+            print(f'Save landmarks error: {e}')
+
     def elawadly_cephalometrics(self):
         try:
             from craniometrics.elawadly import compute_elawadly, POINT_LABELS, ANGLES_DEG
@@ -636,6 +658,67 @@ class GuiMethods:
 
         except Exception as e:
             print(f'Elawadly cephalometrics error: {e}')
+
+    def batch_process_folder(self):
+        from PyQt5.QtWidgets import QMessageBox
+
+        folder = askdirectory(title='Select folder to batch process')
+        if not folder:
+            return
+        folder = Path(folder)
+
+        mesh_extensions = {'.ply', '.obj', '.stl'}
+        pairs = []
+        for mesh_path in sorted(folder.rglob('*')):
+            if mesh_path.suffix.lower() not in mesh_extensions:
+                continue
+            lmk_path = mesh_path.parent / (mesh_path.stem + '_landmarks_raw.json')
+            if lmk_path.exists():
+                pairs.append((mesh_path, lmk_path))
+
+        if not pairs:
+            print('Batch process: no meshes with a matching _landmarks_raw.json found.')
+            return
+
+        names = '\n'.join(f'  {p.name}' for p, _ in pairs)
+        msg = QMessageBox()
+        msg.setWindowTitle('Batch Process')
+        msg.setText(f'{len(pairs)} mesh(es) found with landmarks. Proceed?\n\n{names}')
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.Yes)
+        if msg.exec_() != QMessageBox.Yes:
+            print('Batch process cancelled.')
+            return
+
+        print(f'\nBatch processing {len(pairs)} mesh(es)...')
+        succeeded, failed = 0, 0
+        for i, (mesh_path, lmk_path) in enumerate(pairs):
+            print(f'\n[{i + 1}/{len(pairs)}] {mesh_path.name}')
+            try:
+                with open(lmk_path) as f:
+                    lmk_data = json.load(f)
+
+                self.file_path = mesh_path
+                self.file_name = mesh_path.stem
+                self.extension = mesh_path.suffix
+                self.mesh_file = pv.read(mesh_path)
+                self.landmarks = [
+                    list(lmk_data['nasion']),
+                    list(lmk_data['tragus_left']),
+                    list(lmk_data['tragus_right']),
+                ]
+
+                self.register(self.landmarks, target='cranium')
+                self.cranial_cut()
+                self.craniometrics()
+                self.elawadly_cephalometrics()
+                succeeded += 1
+                print(f'  OK')
+            except Exception as e:
+                failed += 1
+                print(f'  FAILED: {e}')
+
+        print(f'\nBatch complete: {succeeded} succeeded, {failed} failed.')
 
     def calculate_asymmetry(self):
         try:

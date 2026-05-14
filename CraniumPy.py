@@ -127,6 +127,11 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         save_c3_Button.triggered.connect(lambda: self.coordinate_picking(target='right'))
         pickMenu.addAction(save_c3_Button)
 
+        # regMenu - save raw landmarks
+        saveLmkButton = Qt.QAction('Save raw landmarks to file', self)
+        saveLmkButton.triggered.connect(self.save_raw_landmarks)
+        pickMenu.addAction(saveLmkButton)
+
         # regMenu - register
         regoptMenu = regMenu.addMenu('(2) Register for ')
         regH_Button = Qt.QAction('Cranial analysis', self)
@@ -180,6 +185,11 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         elawadlyButton = Qt.QAction('Elawadly Cephalometrics', self)
         elawadlyButton.triggered.connect(self.elawadly_cephalometrics)
         metricsMenu.addAction(elawadlyButton)
+
+        # metricsMenu - batch process folder
+        batchButton = Qt.QAction('Batch process folder', self)
+        batchButton.triggered.connect(self.batch_process_folder)
+        metricsMenu.addAction(batchButton)
 
         # metricsMenu - extract slice only
         FAIButton = Qt.QAction('Evaluate Asymmetry', self)
