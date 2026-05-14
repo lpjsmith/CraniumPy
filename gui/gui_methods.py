@@ -546,6 +546,97 @@ class GuiMethods:
         except:
             pass
 
+    def elawadly_cephalometrics(self):
+        try:
+            from craniometrics.elawadly import compute_elawadly, POINT_LABELS, ANGLES_DEG
+
+            if hasattr(self, 'newpos_landmarks') and len(self.newpos_landmarks) >= 3:
+                nasion = np.array(self.newpos_landmarks[0])
+                tragus_right = np.array(self.newpos_landmarks[1])
+                tragus_left = np.array(self.newpos_landmarks[2])
+            elif hasattr(self, 'landmarks') and len(self.landmarks[0]) == 3:
+                nasion = np.array(self.landmarks[0])
+                tragus_left = np.array(self.landmarks[1])
+                tragus_right = np.array(self.landmarks[2])
+            else:
+                print('Elawadly: landmarks not set. Pick landmarks first.')
+                return
+
+            midpoint, map_vertex, normal_tnt, first_dir, radial_distances, radial_pts, \
+                circumference, circ_slice, measurements = \
+                compute_elawadly(self.mesh_file, nasion, tragus_right, tragus_left, self.file_path)
+
+            self.plotter.clear()
+            self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, opacity=0.7, show_edges=False)
+
+            self.plotter.add_points(map_vertex.reshape(1, 3), render_points_as_spheres=True,
+                                    color='blue', point_size=15)
+            self.plotter.add_points(midpoint.reshape(1, 3), render_points_as_spheres=True,
+                                    color='red', point_size=15)
+
+            valid_pts = [(label, pt) for label, pt in radial_pts.items() if pt is not None]
+            if valid_pts:
+                pts_array = np.array([pt for _, pt in valid_pts])
+                self.plotter.add_points(pts_array, render_points_as_spheres=True,
+                                        color='yellow', point_size=12)
+                all_line_pts = []
+                all_line_cells = []
+                for _, pt in valid_pts:
+                    idx = len(all_line_pts)
+                    all_line_pts.extend([midpoint, pt])
+                    all_line_cells.extend([2, idx, idx + 1])
+                lines_mesh = pv.PolyData(np.array(all_line_pts))
+                lines_mesh.lines = np.array(all_line_cells)
+                self.plotter.add_mesh(lines_mesh, color='yellow', line_width=2)
+
+            if circ_slice is not None and circ_slice.n_points > 0:
+                self.plotter.add_mesh(circ_slice, color='cyan', line_width=3)
+
+            circ_text = f'{circumference} cm' if circumference is not None else 'N/A'
+
+            radial_lines = '\n'.join(
+                f'  {label} ({ang}°): {radial_distances[label]:.1f} mm'
+                if radial_distances.get(label) is not None
+                else f'  {label} ({ang}°): N/A'
+                for label, ang in zip(POINT_LABELS, ANGLES_DEG)
+            )
+
+            w = measurements['widths_mm']
+            width_lines = (
+                f"  W1 ant  (P11-P1): {w['W1_anterior_P11_P1']} mm\n"
+                f"  W1 post (P7-P5):  {w['W1_posterior_P7_P5']} mm\n"
+                f"  W2 ant  (P10-P2): {w['W2_anterior_P10_P2']} mm\n"
+                f"  W2 post (P8-P4):  {w['W2_posterior_P8_P4']} mm"
+            )
+
+            r = measurements['ratios']
+            ratio_lines = (
+                f"  APWR1:   {r['APWR1']}\n"
+                f"  APWR2:   {r['APWR2']}\n"
+                f"  rAPDR30: {r['rAPDR30']}\n"
+                f"  lAPDR30: {r['lAPDR30']}\n"
+                f"  rAPDR60: {r['rAPDR60']}\n"
+                f"  lAPDR60: {r['lAPDR60']}"
+            )
+
+            av = measurements['area_volume']
+            av_lines = f"  APAR: {av['APAR']}\n  APVR: {av['APVR']}"
+
+            overlay = (
+                f"Elawadly Cephalometrics\n"
+                f"MAP Circumference: {circ_text}\n"
+                f"FA30: {measurements['FA30_degrees']}°\n"
+                f"\nRadial distances:\n{radial_lines}\n"
+                f"\nWidths:\n{width_lines}\n"
+                f"\nRatios:\n{ratio_lines}\n"
+                f"\nArea/Volume:\n{av_lines}"
+            )
+
+            self.plotter.add_text(overlay, font_size=9, color='white')
+
+        except Exception as e:
+            print(f'Elawadly cephalometrics error: {e}')
+
     def calculate_asymmetry(self):
         try:
             # Load the mesh

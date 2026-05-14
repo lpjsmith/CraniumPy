@@ -176,6 +176,11 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         sliceextractButton.triggered.connect(lambda: self.craniometrics(slice_only=True))
         metricsMenu.addAction(sliceextractButton)
 
+        # metricsMenu - Elawadly cephalometrics
+        elawadlyButton = Qt.QAction('Elawadly Cephalometrics', self)
+        elawadlyButton.triggered.connect(self.elawadly_cephalometrics)
+        metricsMenu.addAction(elawadlyButton)
+
         # metricsMenu - extract slice only
         FAIButton = Qt.QAction('Evaluate Asymmetry', self)
         FAIButton.triggered.connect(lambda: self.calculate_asymmetry())
@@ -262,6 +267,8 @@ if __name__ == '__main__':
 
     # Show the welcome screen
     welcome_screen = WelcomeScreen()
+    welcome_screen.raise_()
+    welcome_screen.activateWindow()
     if welcome_screen.exec() == Qt.QDialog.Accepted:
         window = MainWindow()
         window.buttons()

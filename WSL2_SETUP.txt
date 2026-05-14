@@ -1,0 +1,95 @@
+CraniumPy WSL2 Setup — Complete Fix History
+============================================
+
+1. CREATE CONDA ENVIRONMENT (Python 3.8, on C drive)
+-----------------------------------------------------
+Use mamba (not conda — conda solver is extremely slow):
+
+    mamba create -n CraniumPy python=3.8 -y
+
+NOTE: Create on C drive (default). Conda/mamba cannot hardlink files to NTFS
+mounts like /mnt/d/ and will fail during install.
+
+
+2. INSTALL PACKAGES IN BATCHES
+-------------------------------
+Always use the full env pip path, NOT system pip:
+
+    # Batch 1 — scientific stack
+    /home/user/miniforge3/envs/CraniumPy/bin/pip install numpy==1.23.5 scipy==1.9.3 matplotlib==3.6.2 pandas==1.3.3 scikit-learn==1.2.0
+
+    # Batch 2 — VTK and PyQt5 (use vtk==9.1.0, NOT 9.2.2)
+    /home/user/miniforge3/envs/CraniumPy/bin/pip install --timeout 300 vtk==9.1.0 PyQt5==5.15.4
+
+    # Batch 3 — pyvista and mesh tools
+    /home/user/miniforge3/envs/CraniumPy/bin/pip install pyvista==0.32.1 pyvistaqt==0.5.0 pymeshfix==0.15.0 pyacvd==0.2.7 tqdm
+
+    # Batch 4 — open3d, opencv (HEADLESS version only!), menpo
+    /home/user/miniforge3/envs/CraniumPy/bin/pip install --timeout 300 open3d==0.16.0 opencv-python-headless==4.6.0.66 menpo==0.11.0
+
+
+3. VTK VERSION — MUST BE 9.1.0, NOT 9.2.2
+-------------------------------------------
+pyvista==0.32.1 is incompatible with vtk==9.2.2.
+The class vtkExtractEdges was moved between versions causing an ImportError.
+
+
+4. OPENCV — USE HEADLESS VERSION
+----------------------------------
+opencv-python ships its own Qt plugins that conflict with PyQt5:
+    "Could not load the Qt platform plugin xcb in .../cv2/qt/plugins"
+Always install opencv-python-headless instead of opencv-python.
+
+
+5. MENPO3D — PATCHED INSTALL
+------------------------------
+menpo3d 0.8.5 has a broken setup.py with invalid version specifier (>=5.6.*)
+that pip 24.1+ rejects. Fix by patching before installing:
+
+    # Step 1: downgrade pip in the env
+    /home/user/miniforge3/envs/CraniumPy/bin/pip install "pip<24.1"
+
+    # Step 2: download tarball using env pip (not system pip)
+    cd /tmp && /home/user/miniforge3/envs/CraniumPy/bin/pip download menpo3d==0.8.5 --no-deps
+
+    # Step 3: extract and patch
+    tar -xzf /tmp/menpo3d-0.8.5.tar.gz -C /tmp/
+    sed -i "s/>=5.6\.\*/>=5.6/g" /tmp/menpo3d-0.8.5/setup.py
+
+    # Step 4: install with no-deps and no-build-isolation
+    /home/user/miniforge3/envs/CraniumPy/bin/pip install /tmp/menpo3d-0.8.5/ --no-deps --no-build-isolation
+
+
+6. SKSPARSE — NUMPY VERSION CONFLICT
+--------------------------------------
+Install via mamba:
+    mamba install -n CraniumPy -c conda-forge scikit-sparse -y
+
+WARNING: mamba upgrades numpy to 1.24+ which breaks menpo (np.float removed).
+After installing sksparse, force numpy back to 1.23.5:
+    /home/user/miniforge3/envs/CraniumPy/bin/pip install numpy==1.23.5 --force-reinstall
+
+numpy must stay at 1.23.5.
+
+
+7. WSLg GRAPHICS FIX (MOST IMPORTANT)
+---------------------------------------
+Problem: WSLg fails to initialise GPU rendering:
+    "Xwayland glamor: GBM Wayland interfaces not available"
+    "Failed to initialize glamor, falling back to sw"
+
+Symptom: Qt windows appear in taskbar but are invisible / blank.
+Window title shows "[WARN:COPY MODE]". Basic X11 apps (e.g. xeyes) work fine.
+
+Fix: force software OpenGL rendering by adding to ~/.bashrc:
+    echo 'export LIBGL_ALWAYS_SOFTWARE=1' >> ~/.bashrc
+    echo 'export GALLIUM_DRIVER=softpipe' >> ~/.bashrc
+    source ~/.bashrc
+
+NOTE: Must be run from a native WSL terminal (e.g. Windows Terminal with Ubuntu
+profile), NOT from VS Code's integrated WSL terminal.
+
+
+8. LAUNCH COMMAND
+------------------
+    cd /mnt/d/projects/CraniumPy && /home/user/miniforge3/envs/CraniumPy/bin/python CraniumPy.py
