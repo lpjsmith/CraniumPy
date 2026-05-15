@@ -720,6 +720,196 @@ class GuiMethods:
 
         print(f'\nBatch complete: {succeeded} succeeded, {failed} failed.')
 
+    def _ask_mesh_type(self):
+        from PyQt5.QtWidgets import QInputDialog
+        options = [
+            'Whole registered (_rg)',
+            'Clipped cranium (_rg_C)',
+            'Clipped face (_rgF_CF)',
+        ]
+        config = {
+            'Whole registered (_rg)':  ('_rg',     'cranium'),
+            'Clipped cranium (_rg_C)': ('_rg_C',   'cranium'),
+            'Clipped face (_rgF_CF)':  ('_rgF_CF', 'face'),
+        }
+        item, ok = QInputDialog.getItem(
+            None, 'Mesh type',
+            'Select which registered mesh type to compare:',
+            options, 0, False
+        )
+        return config[item] if ok else (None, None)
+
+    def _ask_register(self):
+        from PyQt5.QtWidgets import QMessageBox
+        msg = QMessageBox()
+        msg.setWindowTitle('Register meshes?')
+        msg.setText(
+            'Register meshes before comparing?\n\n'
+            'Yes — register now using _landmarks_raw.json found alongside each mesh.\n'
+            'No  — use meshes as-is (must already be registered).'
+        )
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+        return msg.exec_() == QMessageBox.Yes
+
+    def _register_mesh_for_hausdorff(self, mesh_path, reg_target):
+        mesh_path = Path(mesh_path)
+        lmk_path = mesh_path.parent / (mesh_path.stem + '_landmarks_raw.json')
+        if not lmk_path.exists():
+            print(f'  No _landmarks_raw.json for {mesh_path.name} — using as-is')
+            return mesh_path
+        with open(lmk_path) as f:
+            lmk_data = json.load(f)
+        self.file_path = mesh_path
+        self.file_name = mesh_path.stem
+        self.extension = mesh_path.suffix
+        self.mesh_file = pv.read(str(mesh_path))
+        self.landmarks = [
+            list(lmk_data['nasion']),
+            list(lmk_data['tragus_left']),
+            list(lmk_data['tragus_right']),
+        ]
+        self.register(self.landmarks, target=reg_target)
+        return self.file_path
+
+    def hausdorff_two_meshes(self):
+        from PyQt5.QtWidgets import QMessageBox
+        from craniometrics.hausdorff import per_vertex_distances, hausdorff_stats
+        import pandas as pd
+
+        suffix, reg_target = self._ask_mesh_type()
+        if suffix is None:
+            return
+
+        do_register = self._ask_register()
+
+        filetypes = [('Mesh files', '*.ply *.obj *.stl'), ('All files', '*.*')]
+        p1 = Path(askopenfilename(title='Select first mesh', filetypes=filetypes))
+        if not p1.name:
+            return
+        p2 = Path(askopenfilename(title='Select second mesh', filetypes=filetypes))
+        if not p2.name:
+            return
+
+        if do_register:
+            print('Registering meshes...')
+            p1 = self._register_mesh_for_hausdorff(p1, reg_target)
+            p2 = self._register_mesh_for_hausdorff(p2, reg_target)
+        else:
+            for p, label in [(p1, 'first'), (p2, 'second')]:
+                if not p.stem.endswith(suffix):
+                    print(f'Warning: {label} mesh "{p.name}" does not end with "{suffix}"')
+
+        print(f'\nHausdorff: {p1.stem} vs {p2.stem}')
+        try:
+            mesh1 = pv.read(str(p1))
+            mesh2 = pv.read(str(p2))
+
+            d12 = per_vertex_distances(mesh1, mesh2)
+            d21 = per_vertex_distances(mesh2, mesh1)
+
+            s12 = hausdorff_stats(d12, p1.name, p2.name)
+            s21 = hausdorff_stats(d21, p2.name, p1.name)
+
+            print(f'  {p1.stem} → {p2.stem}: '
+                  f'mean={s12["mean_mm"]} max={s12["max_mm"]} rms={s12["rms_mm"]} mm')
+            print(f'  {p2.stem} → {p1.stem}: '
+                  f'mean={s21["mean_mm"]} max={s21["max_mm"]} rms={s21["rms_mm"]} mm')
+
+            csv_path = p1.parent / f'hausdorff_{p1.stem}_vs_{p2.stem}.csv'
+            pd.DataFrame([s12, s21]).to_csv(str(csv_path), index=False)
+            print(f'  CSV saved: {csv_path}')
+
+            mesh2_col = mesh2.copy()
+            mesh2_col['dist_mm'] = d12
+
+            self.plotter.clear()
+            self.plotter.add_mesh(
+                mesh2_col, scalars='dist_mm', cmap='RdYlGn_r', clim=[0, 5],
+                show_scalar_bar=True, scalar_bar_args={'title': 'Distance (mm)'}
+            )
+            self.plotter.add_text(
+                f'{p1.stem} vs {p2.stem}\n'
+                f'→ mean {s12["mean_mm"]} mm  max {s12["max_mm"]} mm\n'
+                f'← mean {s21["mean_mm"]} mm  max {s21["max_mm"]} mm',
+                font_size=9, color='white'
+            )
+        except Exception as e:
+            print(f'Hausdorff two-mesh error: {e}')
+
+    def hausdorff_batch_folder(self):
+        from PyQt5.QtWidgets import QMessageBox
+        from craniometrics.hausdorff import run_pairwise_hausdorff
+
+        suffix, reg_target = self._ask_mesh_type()
+        if suffix is None:
+            return
+
+        do_register = self._ask_register()
+
+        folder = Path(askdirectory(title='Select folder containing meshes'))
+        if not folder.name:
+            return
+
+        mesh_extensions = {'.ply', '.obj', '.stl'}
+
+        if do_register:
+            mesh_paths = sorted([
+                p for p in folder.rglob('*')
+                if p.suffix.lower() in mesh_extensions
+                and (p.parent / (p.stem + '_landmarks_raw.json')).exists()
+            ])
+        else:
+            mesh_paths = sorted([
+                p for p in folder.rglob('*')
+                if p.suffix.lower() in mesh_extensions and p.stem.endswith(suffix)
+            ])
+
+        if not mesh_paths:
+            msg = 'meshes with _landmarks_raw.json' if do_register else f'meshes ending with "{suffix}"'
+            print(f'Hausdorff batch: no {msg} found under {folder}')
+            return
+
+        names = '\n'.join(f'  {p.name}' for p in mesh_paths)
+        msg = QMessageBox()
+        msg.setWindowTitle('Batch Hausdorff')
+        reg_note = ' (will be registered first)' if do_register else ''
+        msg.setText(f'{len(mesh_paths)} mesh(es) found{reg_note}. Proceed?\n\n{names}')
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.Yes)
+        if msg.exec_() != QMessageBox.Yes:
+            print('Hausdorff batch cancelled.')
+            return
+
+        if do_register:
+            print('Registering meshes...')
+            registered = []
+            for p in mesh_paths:
+                reg_path = self._register_mesh_for_hausdorff(p, reg_target)
+                registered.append(reg_path)
+            mesh_paths = registered
+
+        output_folder = folder / 'hausdorff_output'
+        print(f'\nBatch Hausdorff: {len(mesh_paths)} meshes → {output_folder}')
+        try:
+            all_metrics = run_pairwise_hausdorff(mesh_paths, output_folder)
+            print(f'Batch Hausdorff complete. {len(all_metrics)} pairs processed.')
+
+            avg_plys = sorted(output_folder.glob('avg_heatmap_*.ply'))
+            if avg_plys:
+                preview = pv.read(str(avg_plys[0]))
+                self.plotter.clear()
+                self.plotter.add_mesh(
+                    preview, scalars='hausdorff_mean_mm', cmap='RdYlGn_r', clim=[0, 5],
+                    show_scalar_bar=True, scalar_bar_args={'title': 'Mean dist (mm)'}
+                )
+                self.plotter.add_text(
+                    f'Preview: {avg_plys[0].name}\n(open hausdorff_output/ for all results)',
+                    font_size=9, color='white'
+                )
+        except Exception as e:
+            print(f'Hausdorff batch error: {e}')
+
     def calculate_asymmetry(self):
         try:
             # Load the mesh

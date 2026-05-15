@@ -191,6 +191,15 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         batchButton.triggered.connect(self.batch_process_folder)
         metricsMenu.addAction(batchButton)
 
+        # metricsMenu - Hausdorff distance
+        hausdorffMenu = metricsMenu.addMenu('Hausdorff distance')
+        hdTwoButton = Qt.QAction('Compare two meshes', self)
+        hdTwoButton.triggered.connect(self.hausdorff_two_meshes)
+        hausdorffMenu.addAction(hdTwoButton)
+        hdBatchButton = Qt.QAction('Batch folder (all vs all)', self)
+        hdBatchButton.triggered.connect(self.hausdorff_batch_folder)
+        hausdorffMenu.addAction(hdBatchButton)
+
         # metricsMenu - extract slice only
         FAIButton = Qt.QAction('Evaluate Asymmetry', self)
         FAIButton.triggered.connect(lambda: self.calculate_asymmetry())

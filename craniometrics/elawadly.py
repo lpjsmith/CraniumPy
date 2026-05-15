@@ -3,7 +3,6 @@ import pyvista as pv
 import json
 import datetime
 from pathlib import Path
-from scipy.spatial import ConvexHull as ScipyConvexHull
 
 RAY_LENGTH = 250.0
 
@@ -136,14 +135,7 @@ def compute_elawadly(mesh_pv, nasion, tragus_right, tragus_left, file_path):
 
 def _compute_circumference(mesh_pv, midpoint, normal_tnt):
     try:
-        hull = ScipyConvexHull(mesh_pv.points)
-        idx_map = {v: i for i, v in enumerate(hull.vertices)}
-        hull_verts = mesh_pv.points[hull.vertices]
-        faces = np.array([[3, idx_map[s[0]], idx_map[s[1]], idx_map[s[2]]]
-                          for s in hull.simplices]).flatten()
-        hull_mesh = pv.PolyData(hull_verts, faces)
-
-        circ_slice = hull_mesh.slice(normal=normal_tnt.tolist(), origin=midpoint.tolist())
+        circ_slice = mesh_pv.slice(normal=normal_tnt.tolist(), origin=midpoint.tolist())
         if circ_slice.n_points < 3:
             return None, None
 
