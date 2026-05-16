@@ -72,7 +72,7 @@ class GuiMethods:
         self.template_path_face = Path('./template/template_face.ply')
         self.template_path_head = Path('./template/template_xy_com.ply') # experimental
 
-        self.CoM_translation = True
+        self.CoM_translation = False
 
     # File tab
     # def import_mesh(self, resample=False):
@@ -366,8 +366,6 @@ class GuiMethods:
             template_mesh = GuiMethods.call_template(ICV_scaling=self.mesh_file.volume / 2339070.752133594)
             template_mesh.points *= 1.2
 
-            self.mesh_file = self.mesh_file.clip_surface(pv.Sphere(radius=125, center=(0, 40, 0)), invert=True)
-            self.mesh_file.clip(normal=[0, 0.6, 1], origin=[0, -60, -50], invert=False)
             self.mesh_file = self.mesh_file.clip('y', origin=[0, -21, 0], invert=False)
 
             if str(self.file_path.stem).endswith('_C'):
@@ -383,7 +381,7 @@ class GuiMethods:
             # write_ply_file(self.mesh_file.clip('z', origin=[0, 0, clip], invert=False), self.file_path)
             write_ply_file(self.mesh_file.clip('y', origin=[0, clip, 0], invert=False), self.file_path)
 
-            GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=False)
+            GuiMethods.repairsample(self.file_path, n_vertices=10000, repair=True)
 
             self.mesh_file = pv.read(self.file_path)
             self.plotter.clear()
@@ -398,7 +396,6 @@ class GuiMethods:
                 write_ply_file(self.mesh_file, self.file_path)
 
             self.plotter.add_mesh(self.mesh_file, color=self.mesh_color, show_edges=True)
-            self.plotter.add_mesh(pv.Sphere(radius=125, center=(0, 40, 0)), opacity=0.25)
 
         except:
             pass
@@ -545,6 +542,31 @@ class GuiMethods:
 
         except:
             pass
+
+    def load_raw_landmarks(self):
+        try:
+            lmk_path = Path(askopenfilename(
+                title='Select landmarks JSON file',
+                filetypes=(('Landmark JSON', '*_landmarks_raw.json'), ('JSON files', '*.json'), ('All files', '*.*')),
+            ))
+            if not lmk_path.name:
+                return
+            with open(lmk_path) as f:
+                data = json.load(f)
+            self.landmarks = [
+                list(data['nasion']),
+                list(data['tragus_left']),
+                list(data['tragus_right']),
+            ]
+            pts = np.array([self.landmarks[0], self.landmarks[1], self.landmarks[2]])
+            self.plotter.add_points(pts, render_points_as_spheres=True,
+                                    color='green', point_size=20, opacity=0.8)
+            print(f'Landmarks loaded: {lmk_path.name}  '
+                  f'nasion={self.landmarks[0]}  '
+                  f'tragus_L={self.landmarks[1]}  '
+                  f'tragus_R={self.landmarks[2]}')
+        except Exception as e:
+            print(f'Load landmarks error: {e}')
 
     def save_raw_landmarks(self):
         try:
@@ -724,11 +746,13 @@ class GuiMethods:
         from PyQt5.QtWidgets import QInputDialog
         options = [
             'Whole registered (_rg)',
+            'Face registered (_rgF)',
             'Clipped cranium (_rg_C)',
             'Clipped face (_rgF_CF)',
         ]
         config = {
             'Whole registered (_rg)':  ('_rg',     'cranium'),
+            'Face registered (_rgF)':  ('_rgF',    'face'),
             'Clipped cranium (_rg_C)': ('_rg_C',   'cranium'),
             'Clipped face (_rgF_CF)':  ('_rgF_CF', 'face'),
         }
@@ -773,8 +797,7 @@ class GuiMethods:
         return self.file_path
 
     def hausdorff_two_meshes(self):
-        from PyQt5.QtWidgets import QMessageBox
-        from craniometrics.hausdorff import per_vertex_distances, hausdorff_stats
+        from craniometrics.hausdorff import compute_per_vertex_distances, save_screenshot_sheet, COLORS_RGB, BINS_MM
         import pandas as pd
 
         suffix, reg_target = self._ask_mesh_type()
@@ -796,20 +819,15 @@ class GuiMethods:
             p1 = self._register_mesh_for_hausdorff(p1, reg_target)
             p2 = self._register_mesh_for_hausdorff(p2, reg_target)
         else:
-            for p, label in [(p1, 'first'), (p2, 'second')]:
-                if not p.stem.endswith(suffix):
-                    print(f'Warning: {label} mesh "{p.name}" does not end with "{suffix}"')
+            pass  # meshes used as-is
 
         print(f'\nHausdorff: {p1.stem} vs {p2.stem}')
         try:
-            mesh1 = pv.read(str(p1))
-            mesh2 = pv.read(str(p2))
+            d12, s12 = compute_per_vertex_distances(p1, p2)
+            d21, s21 = compute_per_vertex_distances(p2, p1)
 
-            d12 = per_vertex_distances(mesh1, mesh2)
-            d21 = per_vertex_distances(mesh2, mesh1)
-
-            s12 = hausdorff_stats(d12, p1.name, p2.name)
-            s21 = hausdorff_stats(d21, p2.name, p1.name)
+            s12 = {'Reference': p1.name, 'Target': p2.name, **s12}
+            s21 = {'Reference': p2.name, 'Target': p1.name, **s21}
 
             print(f'  {p1.stem} → {p2.stem}: '
                   f'mean={s12["mean_mm"]} max={s12["max_mm"]} rms={s12["rms_mm"]} mm')
@@ -820,19 +838,24 @@ class GuiMethods:
             pd.DataFrame([s12, s21]).to_csv(str(csv_path), index=False)
             print(f'  CSV saved: {csv_path}')
 
-            mesh2_col = mesh2.copy()
-            mesh2_col['dist_mm'] = d12
-
+            # Interactive view: same 4-bin discrete colours as screenshots
+            bin_idx = np.clip(np.digitize(d12, BINS_MM), 0, len(COLORS_RGB) - 1)
+            mesh2 = pv.read(str(p2))
+            mesh2['dist_rgb'] = COLORS_RGB[bin_idx]
             self.plotter.clear()
-            self.plotter.add_mesh(
-                mesh2_col, scalars='dist_mm', cmap='RdYlGn_r', clim=[0, 5],
-                show_scalar_bar=True, scalar_bar_args={'title': 'Distance (mm)'}
-            )
+            self.plotter.add_mesh(mesh2, scalars='dist_rgb', rgb=True, show_scalar_bar=False)
             self.plotter.add_text(
                 f'{p1.stem} vs {p2.stem}\n'
                 f'→ mean {s12["mean_mm"]} mm  max {s12["max_mm"]} mm\n'
-                f'← mean {s21["mean_mm"]} mm  max {s21["max_mm"]} mm',
+                f'← mean {s21["mean_mm"]} mm  max {s21["max_mm"]} mm\n'
+                f'Green <1 mm  Yellow 1-2 mm  Orange 2-3 mm  Red ≥3 mm',
                 font_size=9, color='white'
+            )
+
+            sheet_path = p1.parent / f'hausdorff_{p1.stem}_vs_{p2.stem}_sheet.png'
+            save_screenshot_sheet(
+                mesh2, d12, sheet_path,
+                title=f'{p1.stem} → {p2.stem}  (mean {s12["mean_mm"]} mm)',
             )
         except Exception as e:
             print(f'Hausdorff two-mesh error: {e}')
@@ -862,7 +885,7 @@ class GuiMethods:
         else:
             mesh_paths = sorted([
                 p for p in folder.rglob('*')
-                if p.suffix.lower() in mesh_extensions and p.stem.endswith(suffix)
+                if p.suffix.lower() in mesh_extensions
             ])
 
         if not mesh_paths:
@@ -892,23 +915,119 @@ class GuiMethods:
         output_folder = folder / 'hausdorff_output'
         print(f'\nBatch Hausdorff: {len(mesh_paths)} meshes → {output_folder}')
         try:
-            all_metrics = run_pairwise_hausdorff(mesh_paths, output_folder)
+            all_metrics, _ = run_pairwise_hausdorff(mesh_paths, output_folder)
             print(f'Batch Hausdorff complete. {len(all_metrics)} pairs processed.')
-
-            avg_plys = sorted(output_folder.glob('avg_heatmap_*.ply'))
-            if avg_plys:
-                preview = pv.read(str(avg_plys[0]))
-                self.plotter.clear()
-                self.plotter.add_mesh(
-                    preview, scalars='hausdorff_mean_mm', cmap='RdYlGn_r', clim=[0, 5],
-                    show_scalar_bar=True, scalar_bar_args={'title': 'Mean dist (mm)'}
-                )
-                self.plotter.add_text(
-                    f'Preview: {avg_plys[0].name}\n(open hausdorff_output/ for all results)',
-                    font_size=9, color='white'
-                )
+            print(f'Screenshot sheets saved to: {output_folder}')
+            self.plotter.add_text(
+                f'Batch Hausdorff complete: {len(all_metrics)} pairs\n'
+                f'Results in: {output_folder.name}/hausdorff_output/',
+                font_size=9, color='white'
+            )
         except Exception as e:
             print(f'Hausdorff batch error: {e}')
+
+    def ern_pooling_test(self):
+        from PyQt5.QtWidgets import QMessageBox
+        from craniometrics.ern_test import run_ern_test
+
+        do_register = self._ask_register()
+
+        # Built-in ERN reference meshes (distributed with code)
+        ern_folder = Path(__file__).parent.parent / 'resources' / 'test_mesh' / 'ERN_7_MHT_meshes'
+        if not ern_folder.exists():
+            print(f'ERN reference folder not found: {ern_folder}')
+            return
+
+        mesh_ext = {'.ply', '.obj', '.stl'}
+        ern_paths = sorted([
+            p for p in ern_folder.glob('*')
+            if p.suffix.lower() in mesh_ext
+            and not p.stem.endswith('_C')
+        ])
+        if do_register:
+            ern_paths = [
+                p for p in ern_paths
+                if (p.parent / (p.stem + '_landmarks_raw.json')).exists()
+            ]
+
+        if not ern_paths:
+            print(f'ERN test: no reference meshes found in {ern_folder}')
+            return
+
+        # Ask: add own mesh?
+        own_msg = QMessageBox()
+        own_msg.setWindowTitle('Add your own mesh?')
+        own_msg.setText(
+            f'{len(ern_paths)} ERN reference mesh(es) loaded.\n\n'
+            'Do you want to add your own mesh to compare against the ERN data?'
+        )
+        own_msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        own_msg.setDefaultButton(QMessageBox.No)
+        own_path = None
+        if own_msg.exec_() == QMessageBox.Yes:
+            filetypes = [('Mesh files', '*.ply *.obj *.stl'), ('All files', '*.*')]
+            p_str = askopenfilename(title='Select your mesh', filetypes=filetypes)
+            if p_str:
+                own_path = Path(p_str)
+
+        all_paths = list(ern_paths) + ([own_path] if own_path else [])
+
+        names = '\n'.join(f'  {p.name}' for p in all_paths)
+        reg_note = ' (will be registered first)' if do_register else ''
+        confirm = QMessageBox()
+        confirm.setWindowTitle('ERN Data Pooling Test')
+        confirm.setText(f'{len(all_paths)} mesh(es){reg_note}:\n\n{names}\n\nProceed?')
+        confirm.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        confirm.setDefaultButton(QMessageBox.Yes)
+        if confirm.exec_() != QMessageBox.Yes:
+            print('ERN test cancelled.')
+            return
+
+        # Register for cranium if requested
+        if do_register:
+            print('ERN: Registering meshes...')
+            registered = []
+            for p in all_paths:
+                reg_path = self._register_mesh_for_hausdorff(p, 'cranium')
+                registered.append(reg_path)
+            all_paths = registered
+
+        # Clip, repair, resample (standard cranial cut) for metrics
+        # CoM translation is suppressed so the clipped mesh stays in the same
+        # coordinate space as the unclipped registered mesh (landmarks remain valid).
+        # Hausdorff runs on unclipped meshes above.
+        print('ERN: Clipping/resampling for metrics...')
+        _saved_com = self.CoM_translation
+        self.CoM_translation = False
+        metric_paths = []
+        for p in all_paths:
+            p = Path(p)
+            try:
+                self.file_path = p
+                self.file_name = p.stem
+                self.extension = p.suffix
+                self.mesh_file = pv.read(str(p))
+                self.cranial_cut()
+                metric_paths.append(self.file_path)
+                print(f'  Clipped: {self.file_path.name}')
+            except Exception as e:
+                print(f'  Clip failed for {p.name}: {e} — using unclipped for metrics')
+                metric_paths.append(p)
+        self.CoM_translation = _saved_com
+
+        output_folder = ern_folder / 'ern_test_output'
+        print(f'\nERN Data Pooling Test: {len(all_paths)} meshes → {output_folder}')
+        try:
+            run_ern_test(all_paths, output_folder, metric_paths=metric_paths)
+            print('ERN test complete.')
+            self.plotter.add_text(
+                f'ERN Test complete: {len(all_paths)} meshes\n'
+                f'Results in: {output_folder.name}/',
+                font_size=9, color='white',
+            )
+        except Exception as e:
+            print(f'ERN test error: {e}')
+            import traceback; traceback.print_exc()
 
     def calculate_asymmetry(self):
         try:
