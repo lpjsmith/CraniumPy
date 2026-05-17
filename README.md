@@ -108,7 +108,9 @@ Summary statistics (min, max, mean, RMS in mm) are reported for each comparison.
 
 **Batch (all-vs-all)** (_**Compute > Hausdorff distance > Batch folder (all vs all)**_): select a folder of meshes. Every pairwise combination is computed and results are written to `hausdorff_metrics.csv`. A multi-view heatmap sheet (top/front/left/right) is saved for each mesh showing its **mean absolute error (MAE)** distance across all comparisons.
 
-![HausdorffSheet](resources/test_mesh/ERN_7_MHT_meshes/ern_test_output/mae_heatmap_A_3dMD_rgF_sheet.png)
+![HausdorffExample](resources/hausdorff_example.png)
+
+![HausdorffExample2](resources/hausdorff_example2.png)
 
 ---
 
@@ -132,7 +134,7 @@ The output is a single summary PNG and three CSV files saved to a user-selected 
 | `ern_elawadly.csv` | Elawadly measurements for each mesh |
 | `ern_test_summary.png` | Visual summary: front-view heatmaps + equivalence tables |
 
-![ERNSummary](resources/test_mesh/ERN_7_MHT_meshes/ern_test_output/ern_test_summary.png)
+![ERNSummary](resources/ern_example.png)
 
 ---
 
