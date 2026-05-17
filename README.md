@@ -6,6 +6,9 @@
     * [Getting started](#getting-started)
     * [Rigid registration and mesh harmonization ](#rigid-registration-and-mesh-harmonization )
     * [Automated measurement extraction](#automated-measurement-extraction)
+    * [Elawadly cephalometrics](#elawadly-cephalometrics)
+    * [Hausdorff distance](#hausdorff-distance)
+    * [ERN data pooling test](#ern-data-pooling-test)
     * [Facial asymmetry calculation](#facial-asymmetry-calculation)
     * [Non-rigid ICP](#non-rigid-icp)
   * [Download CraniumPy (.exe)](#download-craniumpy)
@@ -65,6 +68,73 @@ From a mesh that is pre-processed for cranial analysis, several cephalometric me
 
 _NOTE: CraniumPy has been optimized for pediatric analysis. For this reason, some hard-coded boundary conditions are established in the extraction algorithm [(e.g. code line 95)](./craniometrics/craniometrics.py). If CraniumPy does not work as desired for your research application (e.g. prematures or adults), feel free to contact me to see if we can find a solution._
 
+
+### Elawadly cephalometrics
+
+An additional set of cephalometric measurements based on the method described by [Elawadly et al.](https://doi.org/10.1097/SCS.0000000000009448) can be extracted from a cranially pre-processed mesh under _**Compute > Elawadly Cephalometrics > Single mesh**_. The method requires the three anatomical landmarks (nasion and bilateral tragi) to be set before running.
+
+The algorithm defines a **Maximum Anterior Point (MAP) plane** — a plane parallel to the nasion-tragus-tragus (TNT) plane, displaced to the most anterior vertex of the mesh — and projects an inter-tragal midpoint onto it. From this midpoint, **12 radial distances** are cast outward at 30° intervals (clock-face convention: P12 = anterior, P3 = right, P6 = posterior, P9 = left). The following metrics are derived:
+
+| Metric | Description |
+|---|---|
+| MAP circumference (cm) | Perimeter of the mesh slice through the MAP plane |
+| FA30 (°) | Frontal angulation — angle at P12 between the P11→P12 and P12→P1 vectors |
+| APWR1 / APWR2 | Anterior-to-posterior width ratios at ±30° and ±60° from the midline |
+| rAPDR30 / lAPDR30 | Right and left anterior-to-posterior depth ratios at 30° |
+| rAPDR60 / lAPDR60 | Right and left anterior-to-posterior depth ratios at 60° |
+| APAR | Anterior-to-posterior surface area ratio |
+| APVR | Anterior-to-posterior volume ratio |
+
+Results are saved as `_elawadly.json` alongside the input mesh. A batch version is available under _**Compute > Elawadly Cephalometrics > Batch folder**_.
+
+![ElawadlyOutput](resources/elawadly_example.png)
+
+---
+
+### Hausdorff distance
+
+The Hausdorff distance measures the geometric dissimilarity between two 3D meshes by computing, for every vertex on the **target** mesh, the distance to the nearest point on the **reference** mesh surface. The result is visualised as a colour-coded heatmap overlaid on the target mesh:
+
+| Colour | Distance |
+|---|---|
+| Green | < 1 mm |
+| Yellow | 1–2 mm |
+| Orange | 2–3 mm |
+| Red | ≥ 3 mm |
+
+Summary statistics (min, max, mean, RMS in mm) are reported for each comparison.
+
+**Single comparison** (_**Compute > Hausdorff distance > Compare two meshes**_): select a reference and a target mesh. The coloured mesh is displayed in the viewer and saved as a PLY file.
+
+**Batch (all-vs-all)** (_**Compute > Hausdorff distance > Batch folder (all vs all)**_): select a folder of meshes. Every pairwise combination is computed and results are written to `hausdorff_metrics.csv`. A multi-view heatmap sheet (top/front/left/right) is saved for each mesh showing its **mean absolute error (MAE)** distance across all comparisons.
+
+![HausdorffSheet](resources/test_mesh/ERN_7_MHT_meshes/ern_test_output/mae_heatmap_A_3dMD_rgF_sheet.png)
+
+---
+
+### ERN data pooling test
+
+The ERN Data Pooling Test (_**Compute > ERN Data Pooling Test**_) is designed to assess whether 3D meshes of the same subject acquired with different scanners (or at different time points) are sufficiently equivalent for pooled analysis. The test follows this pipeline:
+
+1. **Hausdorff all-vs-all** on the registered (unclipped) meshes — tests geometric agreement between scanners.
+2. **Clip, Repair, Resample** (cranial pre-processing) applied to each mesh automatically.
+3. **Craniometrics** and **Elawadly cephalometrics** computed on every clipped mesh.
+4. **Equivalence testing**:
+   - Hausdorff weighted mean ≤ 2 mm → PASS / FAIL per mesh.
+   - Craniometric and Elawadly metrics tested against ±5% of the grand mean across all meshes.
+
+The output is a single summary PNG and three CSV files saved to a user-selected output folder:
+
+| File | Contents |
+|---|---|
+| `ern_hausdorff_weighted.csv` | Weighted mean Hausdorff distance per mesh, with PASS/FAIL |
+| `ern_craniometrics.csv` | Craniometric measurements for each mesh |
+| `ern_elawadly.csv` | Elawadly measurements for each mesh |
+| `ern_test_summary.png` | Visual summary: front-view heatmaps + equivalence tables |
+
+![ERNSummary](resources/test_mesh/ERN_7_MHT_meshes/ern_test_output/ern_test_summary.png)
+
+---
 
 ### Facial asymmetry calculation
 A mesh registered for facial analysis can be used to compute the mean distance between each vertex on one half of the face to its corresponding vertex on the other half (using a mirrored reflection). The output is a heatmap (in mm), showing which areas are more or less symmetric. A quantitative metric is also computed, the mean facial asymmetry (MFA) index, which encapsulates the overall asymmetry observed in the face. This algorithm is located under the tab _**compute>Evaluate Asymmetry**_.
