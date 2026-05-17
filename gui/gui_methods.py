@@ -742,26 +742,35 @@ class GuiMethods:
 
         print(f'\nBatch complete: {succeeded} succeeded, {failed} failed.')
 
-    def _ask_mesh_type(self):
+    def _ask_clip_mode(self):
         from PyQt5.QtWidgets import QInputDialog
-        options = [
-            'Whole registered (_rg)',
-            'Face registered (_rgF)',
-            'Clipped cranium (_rg_C)',
-            'Clipped face (_rgF_CF)',
-        ]
-        config = {
-            'Whole registered (_rg)':  ('_rg',     'cranium'),
-            'Face registered (_rgF)':  ('_rgF',    'face'),
-            'Clipped cranium (_rg_C)': ('_rg_C',   'cranium'),
-            'Clipped face (_rgF_CF)':  ('_rgF_CF', 'face'),
-        }
+        options = ['Whole head (no clipping)', 'Clip to cranium', 'Clip to face']
         item, ok = QInputDialog.getItem(
-            None, 'Mesh type',
-            'Select which registered mesh type to compare:',
-            options, 0, False
+            None, 'Processing mode',
+            'How should meshes be prepared before comparison?',
+            options, 0, False,
         )
-        return config[item] if ok else (None, None)
+        return item if ok else None
+
+    def _clip_mesh_for_hausdorff(self, mesh_path, clip_mode):
+        """Clip mesh_path in place; returns the (possibly new) file path."""
+        mesh_path = Path(mesh_path)
+        if clip_mode == 'Whole head (no clipping)':
+            return mesh_path
+        self.file_path = mesh_path
+        self.file_name = mesh_path.stem
+        self.extension = mesh_path.suffix
+        self.mesh_file = pv.read(str(mesh_path))
+        _saved_com = self.CoM_translation
+        self.CoM_translation = False
+        try:
+            if clip_mode == 'Clip to cranium':
+                self.cranial_cut()
+            elif clip_mode == 'Clip to face':
+                self.facial_clip()
+        finally:
+            self.CoM_translation = _saved_com
+        return self.file_path
 
     def _ask_register(self):
         from PyQt5.QtWidgets import QMessageBox
@@ -797,34 +806,40 @@ class GuiMethods:
         return self.file_path
 
     def hausdorff_two_meshes(self):
-        from craniometrics.hausdorff import compute_per_vertex_distances, save_screenshot_sheet, COLORS_RGB, BINS_MM
+        from craniometrics.hausdorff import compute_per_vertex_distances, save_colored_ply, save_screenshot_sheet
         import pandas as pd
-
-        suffix, reg_target = self._ask_mesh_type()
-        if suffix is None:
-            return
 
         do_register = self._ask_register()
 
+        clip_mode = self._ask_clip_mode()
+        if clip_mode is None:
+            return
+
         filetypes = [('Mesh files', '*.ply *.obj *.stl'), ('All files', '*.*')]
-        p1 = Path(askopenfilename(title='Select first mesh', filetypes=filetypes))
+        p1 = Path(askopenfilename(title='Select reference mesh', filetypes=filetypes))
         if not p1.name:
             return
-        p2 = Path(askopenfilename(title='Select second mesh', filetypes=filetypes))
+        p2 = Path(askopenfilename(title='Select target mesh', filetypes=filetypes))
         if not p2.name:
             return
+
+        reg_target = 'face' if clip_mode == 'Clip to face' else 'cranium'
 
         if do_register:
             print('Registering meshes...')
             p1 = self._register_mesh_for_hausdorff(p1, reg_target)
             p2 = self._register_mesh_for_hausdorff(p2, reg_target)
-        else:
-            pass  # meshes used as-is
+
+        if clip_mode != 'Whole head (no clipping)':
+            print(f'Clipping meshes ({clip_mode})...')
+            p1 = self._clip_mesh_for_hausdorff(p1, clip_mode)
+            p2 = self._clip_mesh_for_hausdorff(p2, clip_mode)
 
         print(f'\nHausdorff: {p1.stem} vs {p2.stem}')
         try:
-            d12, s12 = compute_per_vertex_distances(p1, p2)
-            d21, s21 = compute_per_vertex_distances(p2, p1)
+            # signed=True for d12 so viewer gets blue/white/red; abs used for files
+            d12, s12 = compute_per_vertex_distances(p1, p2, signed=True)
+            d21, s21 = compute_per_vertex_distances(p2, p1, signed=False)
 
             s12 = {'Reference': p1.name, 'Target': p2.name, **s12}
             s21 = {'Reference': p2.name, 'Target': p1.name, **s21}
@@ -838,24 +853,37 @@ class GuiMethods:
             pd.DataFrame([s12, s21]).to_csv(str(csv_path), index=False)
             print(f'  CSV saved: {csv_path}')
 
-            # Interactive view: same 4-bin discrete colours as screenshots
-            bin_idx = np.clip(np.digitize(d12, BINS_MM), 0, len(COLORS_RGB) - 1)
-            mesh2 = pv.read(str(p2))
-            mesh2['dist_rgb'] = COLORS_RGB[bin_idx]
-            self.plotter.clear()
-            self.plotter.add_mesh(mesh2, scalars='dist_rgb', rgb=True, show_scalar_bar=False)
-            self.plotter.add_text(
-                f'{p1.stem} vs {p2.stem}\n'
-                f'→ mean {s12["mean_mm"]} mm  max {s12["max_mm"]} mm\n'
-                f'← mean {s21["mean_mm"]} mm  max {s21["max_mm"]} mm\n'
-                f'Green <1 mm  Yellow 1-2 mm  Orange 2-3 mm  Red ≥3 mm',
-                font_size=9, color='white'
-            )
+            # Save colored PLY and 4-view sheet before touching the interactive
+            # plotter — same order as batch version, avoids VTK context conflict.
+            # Use signed distances + coolwarm to match the interactive viewer.
+            max_abs = float(np.abs(d12).max())
+            clim = [-max_abs, max_abs]
+
+            ply_path = p1.parent / f'hausdorff_{p1.stem}_vs_{p2.stem}.ply'
+            save_colored_ply(p2, d12, ply_path, cmap='coolwarm', clim=clim)
 
             sheet_path = p1.parent / f'hausdorff_{p1.stem}_vs_{p2.stem}_sheet.png'
             save_screenshot_sheet(
-                mesh2, d12, sheet_path,
+                pv.read(str(p2)), d12, sheet_path,
                 title=f'{p1.stem} → {p2.stem}  (mean {s12["mean_mm"]} mm)',
+                cmap='coolwarm', clim=clim,
+            )
+
+            # Interactive viewer: signed distances, blue=inside white=zero red=outside
+            mesh2 = pv.read(str(p2))
+            mesh2['distance_mm'] = d12
+            self.plotter.clear()
+            self.plotter.add_mesh(
+                mesh2, scalars='distance_mm', cmap='coolwarm',
+                clim=[-max_abs, max_abs], show_scalar_bar=True,
+                scalar_bar_args={'title': 'Distance (mm)', 'color': 'white'},
+            )
+            self.plotter.add_text(
+                f'{p1.stem} → {p2.stem}\n'
+                f'mean {s12["mean_mm"]} mm  max {s12["max_mm"]} mm  rms {s12["rms_mm"]} mm\n'
+                f'\n{p2.stem} → {p1.stem}\n'
+                f'mean {s21["mean_mm"]} mm  max {s21["max_mm"]} mm  rms {s21["rms_mm"]} mm',
+                font_size=9, color='white',
             )
         except Exception as e:
             print(f'Hausdorff two-mesh error: {e}')
@@ -864,64 +892,66 @@ class GuiMethods:
         from PyQt5.QtWidgets import QMessageBox
         from craniometrics.hausdorff import run_pairwise_hausdorff
 
-        suffix, reg_target = self._ask_mesh_type()
-        if suffix is None:
-            return
-
         do_register = self._ask_register()
+
+        clip_mode = self._ask_clip_mode()
+        if clip_mode is None:
+            return
 
         folder = Path(askdirectory(title='Select folder containing meshes'))
         if not folder.name:
             return
 
         mesh_extensions = {'.ply', '.obj', '.stl'}
-
         if do_register:
             mesh_paths = sorted([
-                p for p in folder.rglob('*')
+                p for p in folder.glob('*')
                 if p.suffix.lower() in mesh_extensions
+                and not p.stem.endswith('_C')
                 and (p.parent / (p.stem + '_landmarks_raw.json')).exists()
             ])
         else:
             mesh_paths = sorted([
-                p for p in folder.rglob('*')
+                p for p in folder.glob('*')
                 if p.suffix.lower() in mesh_extensions
+                and not p.stem.endswith('_C')
             ])
 
         if not mesh_paths:
-            msg = 'meshes with _landmarks_raw.json' if do_register else f'meshes ending with "{suffix}"'
-            print(f'Hausdorff batch: no {msg} found under {folder}')
+            print(f'Hausdorff batch: no meshes found under {folder}')
             return
 
         names = '\n'.join(f'  {p.name}' for p in mesh_paths)
+        reg_note = ' (will be registered first)' if do_register else ''
+        clip_note = f', {clip_mode}' if clip_mode != 'Whole head (no clipping)' else ''
         msg = QMessageBox()
         msg.setWindowTitle('Batch Hausdorff')
-        reg_note = ' (will be registered first)' if do_register else ''
-        msg.setText(f'{len(mesh_paths)} mesh(es) found{reg_note}. Proceed?\n\n{names}')
+        msg.setText(f'{len(mesh_paths)} mesh(es) found{reg_note}{clip_note}. Proceed?\n\n{names}')
         msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg.setDefaultButton(QMessageBox.Yes)
         if msg.exec_() != QMessageBox.Yes:
             print('Hausdorff batch cancelled.')
             return
 
+        reg_target = 'face' if clip_mode == 'Clip to face' else 'cranium'
+
         if do_register:
             print('Registering meshes...')
-            registered = []
-            for p in mesh_paths:
-                reg_path = self._register_mesh_for_hausdorff(p, reg_target)
-                registered.append(reg_path)
-            mesh_paths = registered
+            mesh_paths = [self._register_mesh_for_hausdorff(p, reg_target) for p in mesh_paths]
+
+        if clip_mode != 'Whole head (no clipping)':
+            print(f'Clipping meshes ({clip_mode})...')
+            mesh_paths = [self._clip_mesh_for_hausdorff(p, clip_mode) for p in mesh_paths]
 
         output_folder = folder / 'hausdorff_output'
         print(f'\nBatch Hausdorff: {len(mesh_paths)} meshes → {output_folder}')
         try:
             all_metrics, _ = run_pairwise_hausdorff(mesh_paths, output_folder)
             print(f'Batch Hausdorff complete. {len(all_metrics)} pairs processed.')
-            print(f'Screenshot sheets saved to: {output_folder}')
             self.plotter.add_text(
                 f'Batch Hausdorff complete: {len(all_metrics)} pairs\n'
                 f'Results in: {output_folder.name}/hausdorff_output/',
-                font_size=9, color='white'
+                font_size=9, color='white',
             )
         except Exception as e:
             print(f'Hausdorff batch error: {e}')

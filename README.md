@@ -71,7 +71,7 @@ _NOTE: CraniumPy has been optimized for pediatric analysis. For this reason, som
 
 ### Elawadly cephalometrics
 
-An additional set of cephalometric measurements based on the method described by [Elawadly et al.](https://doi.org/10.1097/SCS.0000000000009448) can be extracted from a cranially pre-processed mesh under _**Compute > Elawadly Cephalometrics > Single mesh**_. The method requires the three anatomical landmarks (nasion and bilateral tragi) to be set before running.
+An additional set of cephalometric measurements based on the method described by [Elawadly et al.](https://doi.org/10.3171/2022.2.PEDS21546) can be extracted from a cranially pre-processed mesh under _**Compute > Elawadly Cephalometrics > Single mesh**_. The method requires the three anatomical landmarks (nasion and bilateral tragi) to be set before running.
 
 The algorithm defines a **Maximum Anterior Point (MAP) plane** — a plane parallel to the nasion-tragus-tragus (TNT) plane, displaced to the most anterior vertex of the mesh — and projects an inter-tragal midpoint onto it. From this midpoint, **12 radial distances** are cast outward at 30° intervals (clock-face convention: P12 = anterior, P3 = right, P6 = posterior, P9 = left). The following metrics are derived:
 
