@@ -25,7 +25,7 @@ class WelcomeScreen(Qt.QDialog):
         self.add_custom_figure("resources/welcomeCP.jpg", layout)
 
         # Add button
-        start_button = Qt.QPushButton("CraniumPy v0.4.2")
+        start_button = Qt.QPushButton("CraniumPy v0.4.4")
         font = QFont("Arial", 14)  # Change font to Arial with a size of 12
         start_button.setFont(font)
         try:
@@ -89,109 +89,133 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         # Basic menubar
         mainMenu = self.menuBar()
         fileMenu = mainMenu.addMenu('File')
-        regMenu = mainMenu.addMenu('Global alignment')
+        lmkMenu = mainMenu.addMenu('Landmarking')
+        regMenu = mainMenu.addMenu('Registration')
+        clipMenu = mainMenu.addMenu('Clip, Repair, Resample')
         metricsMenu = mainMenu.addMenu('Compute')
         utilityMenu = mainMenu.addMenu('Utility')
         viewMenu = mainMenu.addMenu('View')
 
-        # fileMenu - Import mesh button
+        # File
         importButton = Qt.QAction('Import mesh', self)
         importButton.triggered.connect(self.import_mesh)
         importButton.triggered.connect(lambda: self.coordinate_picking(target=None))
         fileMenu.addAction(importButton)
-
-
-        # mainMenu - Exit button
         exitButton = Qt.QAction('Exit', self)
         exitButton.triggered.connect(self.close)
         fileMenu.addAction(exitButton)
 
-        ## FIDUCIAL
-        pickMenu = regMenu.addMenu('(1) Landmark selection (press P)')
-
-        # regMenu - coordinate 1 (nose)
+        # Landmarking
+        pickMenu = lmkMenu.addMenu('Landmark selection (press P)')
         save_c1_Button = Qt.QAction('Save coordinate 1 (nasion)', self)
         save_c1_Button.setShortcut('Ctrl+N')
         save_c1_Button.triggered.connect(lambda: self.coordinate_picking(target='nose'))
         pickMenu.addAction(save_c1_Button)
-
-        # regMenu - coordinate 2 (left)
         save_c2_Button = Qt.QAction('Save coordinate 2 (LH side)', self)
         save_c2_Button.setShortcut('Ctrl+L')
         save_c2_Button.triggered.connect(lambda: self.coordinate_picking(target='left'))
         pickMenu.addAction(save_c2_Button)
-
-        # regMenu - coordinate 3 (right)
         save_c3_Button = Qt.QAction('Save coordinate 3 (RH side)', self)
         save_c3_Button.setShortcut('Ctrl+R')
         save_c3_Button.triggered.connect(lambda: self.coordinate_picking(target='right'))
         pickMenu.addAction(save_c3_Button)
-
-        # regMenu - save raw landmarks
+        loadLmkButton = Qt.QAction('Load raw landmarks from file', self)
+        loadLmkButton.triggered.connect(self.load_raw_landmarks)
+        lmkMenu.addAction(loadLmkButton)
         saveLmkButton = Qt.QAction('Save raw landmarks to file', self)
         saveLmkButton.triggered.connect(self.save_raw_landmarks)
-        pickMenu.addAction(saveLmkButton)
+        lmkMenu.addAction(saveLmkButton)
 
-        # regMenu - register
-        regoptMenu = regMenu.addMenu('(2) Register for ')
-        regH_Button = Qt.QAction('Cranial analysis', self)
+        # Registration
+        regCranMenu = regMenu.addMenu('Cranial analysis')
+        regH_Button = Qt.QAction('Single mesh', self)
         regH_Button.triggered.connect(lambda: self.register(self.landmarks, target='cranium'))
-        regoptMenu.addAction(regH_Button)
-
-        # regMenu - register
-        regF_Button = Qt.QAction('Facial analysis', self)
+        regCranMenu.addAction(regH_Button)
+        batchRegCranButton = Qt.QAction('Batch folder', self)
+        batchRegCranButton.triggered.connect(lambda: self.batch_register(target='cranium'))
+        regCranMenu.addAction(batchRegCranButton)
+        regFaceMenu = regMenu.addMenu('Facial analysis')
+        regF_Button = Qt.QAction('Single mesh', self)
         regF_Button.triggered.connect(lambda: self.register(self.landmarks, target='face'))
-        regoptMenu.addAction(regF_Button)
-
-        # regMenu - Clip Mesh
-        clipMenu = regMenu.addMenu('(3) Clip, Repair, Resample')
-        FclipButton = Qt.QAction('Cranium', self)
-        FclipButton.triggered.connect(lambda: self.cranial_cut(initial_clip=False))
-        clipMenu.addAction(FclipButton)
-
-        # regMenu - Clip Mesh
-        FclipButton2 = Qt.QAction('Face', self)
-        FclipButton2.triggered.connect(lambda: self.facial_clip(initial_clip=False))
-        clipMenu.addAction(FclipButton2)
-
-        ## metricsMenu - show registration wrt cranial template
-        showMenu = regMenu.addMenu('(4) Show registration')
+        regFaceMenu.addAction(regF_Button)
+        batchRegFaceButton = Qt.QAction('Batch folder', self)
+        batchRegFaceButton.triggered.connect(lambda: self.batch_register(target='face'))
+        regFaceMenu.addAction(batchRegFaceButton)
+        showMenu = regMenu.addMenu('Show registration')
         templButton = Qt.QAction('Cranium', self)
         templButton.triggered.connect(lambda: self.show_registration(target='cranium'))
         showMenu.addAction(templButton)
-
-        ## metricsMenu - show registration wrt cranial template
         templButton2 = Qt.QAction('Face', self)
         templButton2.triggered.connect(lambda: self.show_registration(target='face'))
         showMenu.addAction(templButton2)
-
         templButton3 = Qt.QAction('Head', self)
         templButton3.triggered.connect(lambda: self.show_registration(target='head'))
         showMenu.addAction(templButton3)
 
+        # Clip, Repair, Resample
+        clipCranMenu = clipMenu.addMenu('Cranium')
+        cranSingleButton = Qt.QAction('Single mesh', self)
+        cranSingleButton.triggered.connect(lambda: self.cranial_cut(initial_clip=False))
+        clipCranMenu.addAction(cranSingleButton)
+        cranBatchButton = Qt.QAction('Batch folder', self)
+        cranBatchButton.triggered.connect(lambda: self.batch_clip(target='cranium'))
+        clipCranMenu.addAction(cranBatchButton)
+        clipFaceMenu = clipMenu.addMenu('Face')
+        faceSingleButton = Qt.QAction('Single mesh', self)
+        faceSingleButton.triggered.connect(lambda: self.facial_clip(initial_clip=False))
+        clipFaceMenu.addAction(faceSingleButton)
+        faceBatchButton = Qt.QAction('Batch folder', self)
+        faceBatchButton.triggered.connect(lambda: self.batch_clip(target='face'))
+        clipFaceMenu.addAction(faceBatchButton)
 
-        ## CRANIOMETRICS (cranium)
-        # metricsMenu - extract measurements button
-        extractButton = Qt.QAction('Cephalometrics', self)
+        # Compute — Cephalometrics
+        cephMenu = metricsMenu.addMenu('Cephalometrics')
+        extractButton = Qt.QAction('Single mesh', self)
         extractButton.triggered.connect(self.craniometrics)
-        metricsMenu.addAction(extractButton)
-
-        # metricsMenu - extract slice only
+        cephMenu.addAction(extractButton)
         sliceextractButton = Qt.QAction('2D slice', self)
         sliceextractButton.triggered.connect(lambda: self.craniometrics(slice_only=True))
-        metricsMenu.addAction(sliceextractButton)
+        cephMenu.addAction(sliceextractButton)
+        cephBatchButton = Qt.QAction('Batch folder', self)
+        cephBatchButton.triggered.connect(self.batch_craniometrics)
+        cephMenu.addAction(cephBatchButton)
 
-        # metricsMenu - Elawadly cephalometrics
-        elawadlyButton = Qt.QAction('Elawadly Cephalometrics', self)
+        # Compute — Evaluate Asymmetry
+        asymMenu = metricsMenu.addMenu('Evaluate Asymmetry')
+        FAIButton = Qt.QAction('Single mesh', self)
+        FAIButton.triggered.connect(lambda: self.calculate_asymmetry())
+        asymMenu.addAction(FAIButton)
+        FAIBatchButton = Qt.QAction('Batch folder', self)
+        FAIBatchButton.triggered.connect(self.batch_asymmetry)
+        asymMenu.addAction(FAIBatchButton)
+
+        # Compute — Non-rigid ICP
+        nicpMenu = metricsMenu.addMenu('Non-rigid ICP')
+        pickMenu2 = nicpMenu.addMenu('NICP cranium')
+        pickButton2 = Qt.QAction('Show template', self)
+        pickButton2.triggered.connect(lambda: self.show_registration(target='cranium'))
+        pickMenu2.addAction(pickButton2)
+        reg_Button2 = Qt.QAction('Calculate', self)
+        reg_Button2.triggered.connect(lambda: self.nricp_to_template(target='cranium'))
+        pickMenu2.addAction(reg_Button2)
+        pickMenu3 = nicpMenu.addMenu('NICP face')
+        pickButton3 = Qt.QAction('Show template', self)
+        pickButton3.triggered.connect(lambda: self.show_registration(target='face'))
+        pickMenu3.addAction(pickButton3)
+        reg_Button3 = Qt.QAction('Calculate', self)
+        reg_Button3.triggered.connect(lambda: self.nricp_to_template(target='face'))
+        pickMenu3.addAction(reg_Button3)
+
+        # Compute — Elawadly Cephalometrics
+        elawadlyMenu = metricsMenu.addMenu('Elawadly Cephalometrics')
+        elawadlyButton = Qt.QAction('Single mesh', self)
         elawadlyButton.triggered.connect(self.elawadly_cephalometrics)
-        metricsMenu.addAction(elawadlyButton)
+        elawadlyMenu.addAction(elawadlyButton)
+        elawadlyBatchButton = Qt.QAction('Batch folder', self)
+        elawadlyBatchButton.triggered.connect(self.batch_elawadly)
+        elawadlyMenu.addAction(elawadlyBatchButton)
 
-        # metricsMenu - batch process folder
-        batchButton = Qt.QAction('Batch process folder', self)
-        batchButton.triggered.connect(self.batch_process_folder)
-        metricsMenu.addAction(batchButton)
-
-        # metricsMenu - Hausdorff distance
+        # Compute — Hausdorff distance
         hausdorffMenu = metricsMenu.addMenu('Hausdorff distance')
         hdTwoButton = Qt.QAction('Compare two meshes', self)
         hdTwoButton.triggered.connect(self.hausdorff_two_meshes)
@@ -200,31 +224,10 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         hdBatchButton.triggered.connect(self.hausdorff_batch_folder)
         hausdorffMenu.addAction(hdBatchButton)
 
-        # metricsMenu - extract slice only
-        FAIButton = Qt.QAction('Evaluate Asymmetry', self)
-        FAIButton.triggered.connect(lambda: self.calculate_asymmetry())
-        metricsMenu.addAction(FAIButton)
-
-        ## NICP
-        nicpMenu = metricsMenu.addMenu('Non-rigid ICP')
-
-        pickMenu2 = nicpMenu.addMenu('NICP cranium')
-        pickButton2 = Qt.QAction('Show template', self)
-        pickButton2.triggered.connect(lambda: self.show_registration(target='cranium'))
-        pickMenu2.addAction(pickButton2)
-
-        reg_Button2 = Qt.QAction('Calculate', self)
-        reg_Button2.triggered.connect(lambda: self.nricp_to_template(target='cranium'))
-        pickMenu2.addAction(reg_Button2)
-
-        pickMenu3 = nicpMenu.addMenu('NICP face')
-        pickButton3 = Qt.QAction('Show template', self)
-        pickButton3.triggered.connect(lambda: self.show_registration(target='face'))
-        pickMenu3.addAction(pickButton3)
-
-        reg_Button3 = Qt.QAction('Calculate', self)
-        reg_Button3.triggered.connect(lambda: self.nricp_to_template(target='face'))
-        pickMenu3.addAction(reg_Button3)
+        # Compute — ERN Data Pooling Test
+        ernButton = Qt.QAction('ERN Data Pooling Test', self)
+        ernButton.triggered.connect(self.ern_pooling_test)
+        metricsMenu.addAction(ernButton)
 
         # ## VIEW
         viewsMenu = viewMenu.addMenu('Camera View')
@@ -251,6 +254,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
         resetviewButton = Qt.QAction(' XZ plane (bottom)', self)
         resetviewButton.triggered.connect(lambda: self.plotter.view_xz())
         viewsMenu.addAction(resetviewButton)
+
 
         # ## UTILITY
 
@@ -279,7 +283,7 @@ class MainWindow(Qt.QMainWindow, GuiMethods):
 
 
 if __name__ == '__main__':
-    print('Running CraniumPy 0.4.2\n-----------------------')
+    print('Running CraniumPy 0.4.4\n-----------------------')
     root = Tk()
     root.withdraw()  # removes tkwindow from file import
     app = Qt.QApplication(sys.argv)

@@ -73,6 +73,9 @@ class GuiMethods:
         self.template_path_head = Path('./template/template_xy_com.ply') # experimental
 
         self.CoM_translation = False
+        self._hd_ref_path = None
+        self._hd_ref_actor = None
+        self._hd_toggle_widget = None
 
     # File tab
     # def import_mesh(self, resample=False):
@@ -268,7 +271,7 @@ class GuiMethods:
         self.mesh_file.rotate_z(metrics.z_rotation_normals, transform_all_input_vectors=True)
 
 
-        suffix = "_rgF" if target == "face" else "_rg"
+        suffix = "_rgF" if target == "face" else "_rgC"
         self.file_path = GuiMethods.save_ply_file(self.mesh_file, self.file_path, suffix)
 
         template_path = Path("./template/template_xy.ply")
@@ -368,10 +371,10 @@ class GuiMethods:
 
             self.mesh_file = self.mesh_file.clip('y', origin=[0, -21, 0], invert=False)
 
-            if str(self.file_path.stem).endswith('_C'):
+            if str(self.file_path.stem).endswith('_clipC'):
                 pass
             else:
-                self.file_path = self.file_path.with_name(self.file_path.stem + '_C.ply')
+                self.file_path = self.file_path.with_name(self.file_path.stem + '_clipC.ply')
             write_ply_file(self.mesh_file, self.file_path)
 
             GuiMethods.repairsample(self.file_path, n_vertices=20000, repair=True)
@@ -418,11 +421,10 @@ class GuiMethods:
             self.mesh_file = self.mesh_file.clip('z', origin=[0, 20, templ_centroid[2] - 1], invert=False)
             self.mesh_file = self.mesh_file.clip_surface(pv.Sphere(radius=115, center=(0, 25, -25)), invert=True)
 
-            if str(self.file_path.stem).endswith('_CF'):
+            if str(self.file_path.stem).endswith('_clipF'):
                 pass
             else:
-
-                self.file_path = self.file_path.with_name(self.file_path.stem + '_CF.ply')
+                self.file_path = self.file_path.with_name(self.file_path.stem + '_clipF.ply')
             write_ply_file(self.mesh_file, self.file_path)
 
             self.mesh_file = pv.read(self.file_path)
@@ -742,6 +744,247 @@ class GuiMethods:
 
         print(f'\nBatch complete: {succeeded} succeeded, {failed} failed.')
 
+    # ------------------------------------------------------------------
+    # Shared batch helpers
+    # ------------------------------------------------------------------
+    def _ask_mesh_filter(self):
+        """Ask user which generation of meshes to include in a batch operation.
+
+        Returns a callable filter(Path) -> bool, or None if cancelled.
+        """
+        from PyQt5.QtWidgets import QInputDialog
+        options = [
+            'All meshes',
+            'Originals only',
+            'Registered to cranium (_rgC)',
+            'Registered to face (_rgF)',
+            'Clipped to cranium (_clipC)',
+            'Clipped to face (_clipF)',
+            'Registered cranium + clipped cranium (_rgC_clipC)',
+            'Registered cranium + clipped face (_rgC_clipF)',
+            'Registered face + clipped cranium (_rgF_clipC)',
+            'Registered face + clipped face (_rgF_clipF)',
+        ]
+        item, ok = QInputDialog.getItem(
+            None, 'Select meshes', 'Which meshes should be included?',
+            options, 0, False,
+        )
+        if not ok:
+            return None
+        filters = {
+            options[1]:  lambda p: not any(p.stem.endswith(s) for s in ('_rgC', '_rgF', '_clipC', '_clipF')),
+            options[2]:  lambda p: p.stem.endswith('_rgC'),
+            options[3]:  lambda p: p.stem.endswith('_rgF'),
+            options[4]:  lambda p: p.stem.endswith('_clipC'),
+            options[5]:  lambda p: p.stem.endswith('_clipF'),
+            options[6]:  lambda p: p.stem.endswith('_rgC_clipC'),
+            options[7]:  lambda p: p.stem.endswith('_rgC_clipF'),
+            options[8]:  lambda p: p.stem.endswith('_rgF_clipC'),
+            options[9]:  lambda p: p.stem.endswith('_rgF_clipF'),
+        }
+        return filters.get(item, lambda p: True)
+
+    def _batch_collect_meshes(self, folder, title='Batch'):
+        """Select folder, apply mesh filter, return filtered list. Returns None on cancel."""
+        from PyQt5.QtWidgets import QMessageBox
+        mesh_extensions = {'.ply', '.obj', '.stl'}
+        filt = self._ask_mesh_filter()
+        if filt is None:
+            return None
+        meshes = sorted([p for p in folder.glob('*')
+                         if p.suffix.lower() in mesh_extensions and filt(p)])
+        if not meshes:
+            print(f'{title}: no matching mesh files found.')
+            return []
+        names = '\n'.join(f'  {p.name}' for p in meshes)
+        msg = QMessageBox()
+        msg.setWindowTitle(title)
+        msg.setText(f'{len(meshes)} mesh(es) selected. Proceed?\n\n{names}')
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.Yes)
+        if msg.exec_() != QMessageBox.Yes:
+            return []
+        return meshes
+
+    # ------------------------------------------------------------------
+    # Batch register
+    # ------------------------------------------------------------------
+    def batch_register(self, target='cranium'):
+        folder = Path(askdirectory(title='Select folder to batch register'))
+        if not folder.name:
+            return
+        meshes = self._batch_collect_meshes(folder, 'Batch Register')
+        if not meshes:
+            return
+        succeeded, failed = 0, 0
+        for i, mesh_path in enumerate(meshes):
+            print(f'\n[{i + 1}/{len(meshes)}] {mesh_path.name}')
+            try:
+                lmk_path = mesh_path.parent / (mesh_path.stem + '_landmarks_raw.json')
+                if not lmk_path.exists():
+                    print(f'  No _landmarks_raw.json — skipped')
+                    failed += 1
+                    continue
+                with open(lmk_path) as f:
+                    lmk_data = json.load(f)
+                self.file_path = mesh_path
+                self.file_name = mesh_path.stem
+                self.extension = mesh_path.suffix
+                self.mesh_file = pv.read(str(mesh_path))
+                self.landmarks = [
+                    list(lmk_data['nasion']),
+                    list(lmk_data['tragus_left']),
+                    list(lmk_data['tragus_right']),
+                ]
+                self.register(self.landmarks, target=target)
+                succeeded += 1
+                print('  OK')
+            except Exception as e:
+                failed += 1
+                print(f'  FAILED: {e}')
+        print(f'\nBatch register complete: {succeeded} succeeded, {failed} failed.')
+
+    # ------------------------------------------------------------------
+    # Batch clip
+    # ------------------------------------------------------------------
+    def batch_clip(self, target='cranium'):
+        folder = Path(askdirectory(title='Select folder to batch clip'))
+        if not folder.name:
+            return
+        meshes = self._batch_collect_meshes(folder, 'Batch Clip')
+        if not meshes:
+            return
+        succeeded, failed = 0, 0
+        for i, mesh_path in enumerate(meshes):
+            print(f'\n[{i + 1}/{len(meshes)}] {mesh_path.name}')
+            try:
+                self.file_path = mesh_path
+                self.file_name = mesh_path.stem
+                self.extension = mesh_path.suffix
+                self.mesh_file = pv.read(str(mesh_path))
+                if target == 'cranium':
+                    self.cranial_cut()
+                else:
+                    self.facial_clip()
+                succeeded += 1
+                print('  OK')
+            except Exception as e:
+                failed += 1
+                print(f'  FAILED: {e}')
+        print(f'\nBatch clip complete: {succeeded} succeeded, {failed} failed.')
+
+    # ------------------------------------------------------------------
+    # Batch craniometrics (metrics only — no register/clip)
+    # ------------------------------------------------------------------
+    def batch_craniometrics(self):
+        folder = Path(askdirectory(title='Select folder for batch craniometrics'))
+        if not folder.name:
+            return
+        meshes = self._batch_collect_meshes(folder, 'Batch Craniometrics')
+        if not meshes:
+            return
+        succeeded, failed = 0, 0
+        for i, mesh_path in enumerate(meshes):
+            print(f'\n[{i + 1}/{len(meshes)}] {mesh_path.name}')
+            try:
+                self.file_path = mesh_path
+                self.file_name = mesh_path.stem
+                self.extension = mesh_path.suffix
+                self.mesh_file = pv.read(str(mesh_path))
+                self.craniometrics()
+                succeeded += 1
+                print('  OK')
+            except Exception as e:
+                failed += 1
+                print(f'  FAILED: {e}')
+        print(f'\nBatch craniometrics complete: {succeeded} succeeded, {failed} failed.')
+
+    # ------------------------------------------------------------------
+    # Batch Elawadly (metrics only — no register/clip)
+    # ------------------------------------------------------------------
+    def batch_elawadly(self):
+        folder = Path(askdirectory(title='Select folder for batch Elawadly'))
+        if not folder.name:
+            return
+        meshes = self._batch_collect_meshes(folder, 'Batch Elawadly')
+        if not meshes:
+            return
+        succeeded, failed = 0, 0
+        for i, mesh_path in enumerate(meshes):
+            print(f'\n[{i + 1}/{len(meshes)}] {mesh_path.name}')
+            try:
+                stem = mesh_path.stem
+                for clip_sfx in ('_rgC_clipC', '_rgC_clipF', '_rgF_clipC', '_rgF_clipF'):
+                    if stem.endswith(clip_sfx):
+                        base = stem[:-len(clip_sfx)] + clip_sfx[:-6]  # keep the _rgX part
+                        break
+                else:
+                    if stem.endswith('_clipC') or stem.endswith('_clipF'):
+                        base = stem[:-6]
+                    else:
+                        base = stem
+                if base.endswith('_rgC') or base.endswith('_rgF'):
+                    lmk_path = mesh_path.parent / (base + '_landmarks.json')
+                else:
+                    lmk_path = mesh_path.parent / (base + '_landmarks_raw.json')
+                if not lmk_path.exists():
+                    print(f'  No landmark file ({lmk_path.name}) — skipped')
+                    failed += 1
+                    continue
+                with open(lmk_path) as f:
+                    lmk_data = json.load(f)
+                self.file_path = mesh_path
+                self.file_name = mesh_path.stem
+                self.extension = mesh_path.suffix
+                self.mesh_file = pv.read(str(mesh_path))
+                if 'nasion' in lmk_data:
+                    self.landmarks = [
+                        list(lmk_data['nasion']),
+                        list(lmk_data['tragus_left']),
+                        list(lmk_data['tragus_right']),
+                    ]
+                    if hasattr(self, 'newpos_landmarks'):
+                        delattr(self, 'newpos_landmarks')
+                else:
+                    self.newpos_landmarks = np.array([
+                        lmk_data['new_nasion'],
+                        lmk_data['new_rh_coord'],
+                        lmk_data['new_lh_coord'],
+                    ])
+                self.elawadly_cephalometrics()
+                succeeded += 1
+                print('  OK')
+            except Exception as e:
+                failed += 1
+                print(f'  FAILED: {e}')
+        print(f'\nBatch Elawadly complete: {succeeded} succeeded, {failed} failed.')
+
+    # ------------------------------------------------------------------
+    # Batch asymmetry (metrics only — no register/clip)
+    # ------------------------------------------------------------------
+    def batch_asymmetry(self):
+        folder = Path(askdirectory(title='Select folder for batch asymmetry'))
+        if not folder.name:
+            return
+        meshes = self._batch_collect_meshes(folder, 'Batch Asymmetry')
+        if not meshes:
+            return
+        succeeded, failed = 0, 0
+        for i, mesh_path in enumerate(meshes):
+            print(f'\n[{i + 1}/{len(meshes)}] {mesh_path.name}')
+            try:
+                self.file_path = mesh_path
+                self.file_name = mesh_path.stem
+                self.extension = mesh_path.suffix
+                self.mesh_file = pv.read(str(mesh_path))
+                self.calculate_asymmetry()
+                succeeded += 1
+                print('  OK')
+            except Exception as e:
+                failed += 1
+                print(f'  FAILED: {e}')
+        print(f'\nBatch asymmetry complete: {succeeded} succeeded, {failed} failed.')
+
     def _ask_clip_mode(self):
         from PyQt5.QtWidgets import QInputDialog
         options = ['Whole head (no clipping)', 'Clip to cranium', 'Clip to face']
@@ -816,10 +1059,10 @@ class GuiMethods:
             return
 
         filetypes = [('Mesh files', '*.ply *.obj *.stl'), ('All files', '*.*')]
-        p1 = Path(askopenfilename(title='Select reference mesh', filetypes=filetypes))
+        p1 = Path(askopenfilename(title='Select mesh 1', filetypes=filetypes))
         if not p1.name:
             return
-        p2 = Path(askopenfilename(title='Select target mesh', filetypes=filetypes))
+        p2 = Path(askopenfilename(title='Select mesh 2', filetypes=filetypes))
         if not p2.name:
             return
 
@@ -869,6 +1112,16 @@ class GuiMethods:
                 cmap='coolwarm', clim=clim,
             )
 
+            # Remove previous toggle widget before clearing the plotter
+            if self._hd_toggle_widget is not None:
+                try:
+                    self._hd_toggle_widget.Off()
+                    self._hd_toggle_widget.GetRepresentation().SetVisibility(0)
+                    self.plotter.button_widgets.remove(self._hd_toggle_widget)
+                except Exception:
+                    pass
+                self._hd_toggle_widget = None
+
             # Interactive viewer: signed distances, blue=inside white=zero red=outside
             mesh2 = pv.read(str(p2))
             mesh2['distance_mm'] = d12
@@ -885,8 +1138,38 @@ class GuiMethods:
                 f'mean {s21["mean_mm"]} mm  max {s21["max_mm"]} mm  rms {s21["rms_mm"]} mm',
                 font_size=9, color='white',
             )
+            self._hd_ref_path = p1
+            self._hd_ref_actor = None
+
+            # On-screen toggle button for reference mesh overlay
+            self._hd_toggle_widget = self.plotter.add_checkbox_button_widget(
+                self._toggle_hd_ref_cb,
+                value=False,
+                position=(10, 10),
+                size=30,
+                color_on='orange',
+                color_off='grey',
+            )
+            self.plotter.add_text(
+                'Mesh 2 visibility', position=(46, 14), font_size=7, color='white',
+                name='hd_ref_label',
+            )
         except Exception as e:
             print(f'Hausdorff two-mesh error: {e}')
+
+    def _toggle_hd_ref_cb(self, state):
+        if self._hd_ref_path is None:
+            return
+        if state:
+            if self._hd_ref_actor is None:
+                ref_mesh = pv.read(str(self._hd_ref_path))
+                self._hd_ref_actor = self.plotter.add_mesh(
+                    ref_mesh, color='orange', opacity=0.4, show_edges=False,
+                )
+        else:
+            if self._hd_ref_actor is not None:
+                self.plotter.remove_actor(self._hd_ref_actor)
+                self._hd_ref_actor = None
 
     def hausdorff_batch_folder(self):
         from PyQt5.QtWidgets import QMessageBox
@@ -903,18 +1186,25 @@ class GuiMethods:
             return
 
         mesh_extensions = {'.ply', '.obj', '.stl'}
+        def _is_clipped(p):
+            return p.stem.endswith('_clipC') or p.stem.endswith('_clipF')
+
+        def _is_registered(p):
+            return p.stem.endswith('_rgC') or p.stem.endswith('_rgF')
+
         if do_register:
             mesh_paths = sorted([
                 p for p in folder.glob('*')
                 if p.suffix.lower() in mesh_extensions
-                and not p.stem.endswith('_C')
+                and not _is_clipped(p)
+                and not _is_registered(p)
                 and (p.parent / (p.stem + '_landmarks_raw.json')).exists()
             ])
         else:
             mesh_paths = sorted([
                 p for p in folder.glob('*')
                 if p.suffix.lower() in mesh_extensions
-                and not p.stem.endswith('_C')
+                and not _is_clipped(p)
             ])
 
         if not mesh_paths:
@@ -972,7 +1262,10 @@ class GuiMethods:
         ern_paths = sorted([
             p for p in ern_folder.glob('*')
             if p.suffix.lower() in mesh_ext
-            and not p.stem.endswith('_C')
+            and not p.stem.endswith('_clipC')
+            and not p.stem.endswith('_clipF')
+            and not p.stem.endswith('_rgC')
+            and not p.stem.endswith('_rgF')
         ])
         if do_register:
             ern_paths = [

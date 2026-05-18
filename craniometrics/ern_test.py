@@ -54,13 +54,36 @@ def _run_craniometrics(mesh_paths):
 
 
 def _find_lmk_path(p):
-    """Find _landmarks_raw.json for p, stripping _C suffix as fallback for clipped meshes."""
-    lmk = p.parent / (p.stem + '_landmarks_raw.json')
-    if not lmk.exists() and p.stem.endswith('_C'):
-        candidate = p.parent / (p.stem[:-2] + '_landmarks_raw.json')
-        if candidate.exists():
-            return candidate
-    return lmk if lmk.exists() else None
+    """Find a landmarks JSON for p.
+
+    Strips _clipC or _clipF suffix first, then checks:
+      1. {base}_landmarks_raw.json  — raw landmarks saved before registration
+      2. {base}_landmarks.json      — landmarks saved by register()
+    Falls back to checking the un-stripped stem too.
+    """
+    stem = p.stem
+    if stem.endswith('_clipC') or stem.endswith('_clipF'):
+        base = stem[:-6]
+    else:
+        base = stem
+    for suffix in ('_landmarks_raw.json', '_landmarks.json'):
+        for s in ([base, stem] if base != stem else [stem]):
+            candidate = p.parent / (s + suffix)
+            if candidate.exists():
+                return candidate
+    return None
+
+
+def _read_lmk_coords(lmk):
+    """Extract (nasion, tragus_left, tragus_right) from either landmark format."""
+    if 'nasion' in lmk:
+        return (np.array(lmk['nasion']),
+                np.array(lmk['tragus_left']),
+                np.array(lmk['tragus_right']))
+    # registration format: new_nasion, new_lh_coord, new_rh_coord
+    return (np.array(lmk['new_nasion']),
+            np.array(lmk['new_lh_coord']),
+            np.array(lmk['new_rh_coord']))
 
 
 def _run_elawadly(mesh_paths):
@@ -74,10 +97,8 @@ def _run_elawadly(mesh_paths):
         try:
             with open(lmk_path) as f:
                 lmk = json.load(f)
+            nasion, tragus_left, tragus_right = _read_lmk_coords(lmk)
             mesh_pv = pv.read(str(p))
-            nasion       = np.array(lmk['nasion'])
-            tragus_left  = np.array(lmk['tragus_left'])
-            tragus_right = np.array(lmk['tragus_right'])
             _, _, _, _, _, _, _, _, measurements = compute_elawadly(
                 mesh_pv, nasion, tragus_right, tragus_left, p
             )
@@ -323,11 +344,11 @@ def run_ern_test(mesh_paths, output_folder, metric_paths=None):
     n_el = len(elaw_rows)
 
     fig_w = max(16, n * 2.4 + 4)
-    hm_h = 2.8
-    hd_h = max(1.8, n * 0.28 + 0.8)
-    cr_h = max(1.5, n_cr * 0.22 + 0.9)
-    el_h = max(1.5, n_el * 0.22 + 0.9)
-    fig_h = hm_h + hd_h + cr_h + el_h + 1.5
+    hm_h = 2.2
+    hd_h = max(1.2, n * 0.28 + 0.6)
+    cr_h = max(1.0, n_cr * 0.22 + 0.6)
+    el_h = max(1.0, n_el * 0.22 + 0.6)
+    fig_h = hm_h + hd_h + cr_h + el_h + 0.6
 
     fig = plt.figure(figsize=(fig_w, fig_h), dpi=120)
     folder_name = mesh_paths[0].parent.name if mesh_paths else ''
@@ -336,7 +357,7 @@ def run_ern_test(mesh_paths, output_folder, metric_paths=None):
     gs = gridspec.GridSpec(
         4, 1, figure=fig,
         height_ratios=[hm_h, hd_h, cr_h, el_h],
-        hspace=0.55, top=0.94, bottom=0.02, left=0.02, right=0.98,
+        hspace=0.3, top=0.94, bottom=0.02, left=0.02, right=0.98,
     )
 
     # Row 0: front-view heatmaps
