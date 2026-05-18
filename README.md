@@ -145,17 +145,6 @@ A mesh registered for facial analysis can be used to compute the mean distance b
 A non-rigid iterative closest point (NICP) algorithm has been implemented which tries to deform a template onto the user's input mesh. This feature can come in handy when there's a need for point-to-point correspondence (e.g. automated landmark detection, advanced shape analysis, geometric deep learning). This step allows a user to match the topology of a mesh or set of meshes to that of the template. The mesh quality may be (slightly) reduced after NICP.
 
 
-## Download CraniumPy
-If you want to run CraniumPy locally (on Windows) follow the steps below. You do not need to install any requirements or dependencies.
-
-1. Download the latest version: [CraniumPy (v0.4.4)](https://drive.google.com/drive/folders/1ilAXTINd2TuKbOsuQLmsuLVTppJMYOxz)
-2. Extract the .zip folder in any location
-
-    _The extracted folder contains the templates (for visualizing the registration) and an example mesh is provided at `test_mesh/test_mesh.ply` for experimentation._
-
-3. Run **_CraniumPy_v0.4.4.exe_** (give it a few seconds to load)
-
-
 IMPORTANT: the reference frame has been changed from v0.3.0 onwards. The new convention is based on the more commonly used right hand coordinate system in which the z-axis points 
 outward from the nose. 
 
